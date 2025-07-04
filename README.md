@@ -1,6 +1,11 @@
-# Local Kubernetes Deployment Guide for AKS Store Demo
+# AKS Store Demo Deployment Guide
 
-This guide provides step-by-step instructions for deploying the AKS Store Demo application on a local Kubernetes cluster.
+This guide provides step-by-step instructions for deploying the AKS Store Demo application either on a local Kubernetes cluster or on Azure using Terraform.
+
+## Deployment Options
+
+- [Local Kubernetes Deployment](#local-kubernetes-deployment)
+- [Azure Deployment with Terraform](#azure-deployment-with-terraform)
 
 ## Prerequisites
 
@@ -9,8 +14,6 @@ Before you begin, ensure you have the following installed:
 - [Docker](https://docs.docker.com/get-docker/) - Container runtime
 - A local Kubernetes cluster (choose one):
   - [Docker Desktop with Kubernetes](https://docs.docker.com/desktop/kubernetes/) (easiest option)
-  - [Minikube](https://minikube.sigs.k8s.io/docs/start/)
-  - [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) - Kubernetes command-line tool
 - [NGINX Ingress Controller](https://kubernetes.github.io/ingress-nginx/deploy/) - Required for the Ingress resource
 
@@ -23,38 +26,13 @@ Before you begin, ensure you have the following installed:
 4. Click "Apply & Restart"
 5. Wait for Kubernetes to start (green indicator in the bottom-left corner)
 
-### Option B: Minikube
-```bash
-# Start Minikube with sufficient resources
-minikube start --cpus=4 --memory=4096m
-```
-
-### Option C: Kind
-```bash
-# Create a Kind cluster
-kind create cluster --name aks-store-demo
-```
-
 ## Step 2: Install NGINX Ingress Controller
 
 The application uses an Ingress resource, so you need to install an Ingress controller:
-
-### For Docker Desktop or Kind:
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
-```
-
-### For Minikube:
-```bash
-minikube addons enable ingress
-```
-
-Wait for the Ingress controller to be ready:
-```bash
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=120s
+```bash 
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx    
+  helm repo update    
+  helm install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx
 ```
 
 ## Step 3: Deploy the AKS Store Demo Application
@@ -106,35 +84,13 @@ kubectl get ingress
 ### For Docker Desktop:
 The application should be accessible at http://localhost
 
-### For Minikube:
-```bash
-# Get the IP address
-minikube ip
-```
-Then access the application at http://<minikube-ip>
-
-### For Kind:
-Port-forward the Ingress controller to access the application:
-```bash
-kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 8080:80
-```
-Then access the application at http://localhost:8080
-
-## Step 6: Explore the Application Components
-
-The AKS Store Demo consists of:
-
-1. **Store Frontend** - Web UI for the store
-2. **Product Service** - API for product catalog
-3. **Order Service** - API for order processing
-4. **RabbitMQ** - Message queue for order processing
-
 You can access the RabbitMQ management interface:
 ```bash
 # Port-forward the RabbitMQ management interface
 kubectl port-forward service/rabbitmq 15672:15672
 ```
 Then access it at http://localhost:15672 with username: `username` and password: `password`
+
 
 ## Troubleshooting
 
@@ -176,13 +132,60 @@ kubectl delete -f kubernetes/store-ingress.yaml
 kubectl delete -f kubernetes/aks-store.yaml
 ```
 
-To delete your local cluster (if using Minikube or Kind):
+## Azure Deployment with Terraform
+
+### Prerequisites for Azure Deployment
+
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) (version 2.30.0 or later)
+- [Terraform](https://www.terraform.io/downloads.html) (version 1.0.0 or later)
+- SSH key pair (for AKS node access)
+
+### Step 1: Authenticate to Azure
 
 ```bash
-# For Minikube
-minikube stop
-minikube delete
+# Login to Azure
+az login
 
-# For Kind
-kind delete cluster --name aks-store-demo
+# (Optional) If you have multiple subscriptions, select the one you want to use
+az account set --subscription "your-subscription-id"
 ```
+
+### Step 2: Deploy with Terraform
+
+```bash
+# Navigate to the terraform directory
+cd terraform
+
+# Initialize Terraform
+terraform init
+
+# Review the deployment plan
+terraform plan
+
+# Deploy the infrastructure
+terraform apply
+```
+
+When prompted, type `yes` to confirm the deployment. The process typically takes 10-15 minutes.
+
+### Step 3: Configure kubectl
+
+```bash
+# Configure kubectl to connect to your AKS cluster
+$(terraform output -raw kubectl_config_command)
+
+# Verify the connection
+kubectl get nodes
+```
+
+### Cleanup Azure Resources
+
+To remove all Azure resources when you're done:
+
+```bash
+terraform destroy
+```
+
+When prompted, type `yes` to confirm.
+
+For more detailed instructions, advanced configurations, and troubleshooting, see the [detailed Terraform guide](terraform/README.md).
