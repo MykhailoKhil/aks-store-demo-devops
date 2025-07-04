@@ -1,0 +1,329 @@
+# Azure DevOps Pipeline for AKS Store Demo
+# This pipeline builds, tests, and deploys the AKS Store Demo application to Azure Kubernetes Service
+
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - docker/**
+    - kubernetes/**
+    - terraform/**
+
+variables:
+  # Azure subscription
+  azureSubscription: 'dd2193da-276d-4686-b0e7-9212589a09ab'
+  
+  # Azure Container Registry (created by Terraform)
+  acrName: 'aksstoredemoregistry'  # Must match the name in terraform/variables.tf
+  acrLoginServer: '$(acrName).azurecr.io'
+  
+  # AKS cluster
+  aksResourceGroup: '$(resourcePrefix)-rg'
+  aksClusterName: '$(resourcePrefix)-aks'
+  
+  # Docker image names and tags
+  imageTag: '$(Build.BuildId)'
+  storeFrontImage: '$(acrLoginServer)/store-front:$(imageTag)'
+  orderServiceImage: '$(acrLoginServer)/order-service:$(imageTag)'
+  productServiceImage: '$(acrLoginServer)/product-service:$(imageTag)'
+  
+  # Resource prefix for naming
+  resourcePrefix: 'aks-store-demo'
+  
+  # Terraform version
+  terraformVersion: '1.5.7'
+
+stages:
+- stage: DeployInfrastructure
+  displayName: 'Deploy Infrastructure'
+  jobs:
+  - job: Terraform
+    displayName: 'Deploy with Terraform'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Install Terraform'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Download and install Terraform
+          wget -q https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+          unzip -q terraform_$(terraformVersion)_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+          terraform --version
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Init'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        inlineScript: |
+          # Create backend.tf file for remote state
+          cat > backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "$(aksResourceGroup)"
+              storage_account_name = "$(resourcePrefix)tfstate"
+              container_name       = "tfstate"
+              key                  = "terraform.tfstate"
+            }
+          }
+          EOF
+          
+          # Initialize Terraform
+          terraform init
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Plan'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        inlineScript: |
+          # Run Terraform plan
+          terraform plan -out=tfplan
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Apply'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        inlineScript: |
+          # Apply Terraform plan
+          terraform apply -auto-approve tfplan
+
+- stage: Build
+  displayName: 'Build and Push Images'
+  dependsOn: DeployInfrastructure
+  jobs:
+  - job: BuildAndPush
+    displayName: 'Build and Push Docker Images'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    # Get ACR credentials using Azure CLI
+    - task: AzureCLI@2
+      displayName: 'Get ACR Credentials'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Get ACR credentials and store as pipeline variables
+          echo "##vso[task.setvariable variable=acrUsername]$(az acr credential show -n $(acrName) --query username -o tsv)"
+          echo "##vso[task.setvariable variable=acrPassword]$(az acr credential show -n $(acrName) --query passwords[0].value -o tsv)"
+    
+    # Login to ACR using Docker
+    - script: |
+        echo "Logging in to ACR..."
+        echo "$(acrPassword)" | docker login $(acrLoginServer) -u $(acrUsername) --password-stdin
+      displayName: 'Docker Login to ACR'
+    
+    - task: Docker@2
+      displayName: 'Build Store Frontend'
+      inputs:
+        command: 'build'
+        repository: '$(acrLoginServer)/store-front'
+        dockerfile: 'docker/store-front/Dockerfile'
+        buildContext: 'docker/store-front'
+        tags: |
+          $(imageTag)
+          latest
+    
+    - task: Docker@2
+      displayName: 'Build Order Service'
+      inputs:
+        command: 'build'
+        repository: '$(acrLoginServer)/order-service'
+        dockerfile: 'docker/order-service/Dockerfile'
+        buildContext: 'docker/order-service'
+        tags: |
+          $(imageTag)
+          latest
+    
+    - task: Docker@2
+      displayName: 'Build Product Service'
+      inputs:
+        command: 'build'
+        repository: '$(acrLoginServer)/product-service'
+        dockerfile: 'docker/product-service/Dockerfile'
+        buildContext: 'docker/product-service'
+        tags: |
+          $(imageTag)
+          latest
+
+- stage: Test
+  displayName: 'Test Application'
+  dependsOn: Build
+  jobs:
+  - job: TestImages
+    displayName: 'Test Docker Images'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    # Login is already handled in the Build stage
+    
+    - script: |
+        echo "Running Store Frontend container for testing..."
+        docker run -d --name store-front -p 8080:8080 $(storeFrontImage)
+        
+        echo "Waiting for container to be healthy..."
+        sleep 10
+        
+        echo "Testing Store Frontend health endpoint..."
+        curl -f http://localhost:8080/health || exit 1
+        
+        echo "Stopping container..."
+        docker stop store-front
+        docker rm store-front
+      displayName: 'Test Store Frontend'
+    
+    - script: |
+        echo "Running Order Service container for testing..."
+        docker run -d --name order-service -p 3000:3000 \
+          -e ORDER_QUEUE_HOSTNAME=localhost \
+          -e ORDER_QUEUE_PORT=5672 \
+          -e ORDER_QUEUE_USERNAME=guest \
+          -e ORDER_QUEUE_PASSWORD=guest \
+          -e FASTIFY_ADDRESS=0.0.0.0 \
+          $(orderServiceImage)
+        
+        echo "Waiting for container to be healthy..."
+        sleep 10
+        
+        echo "Testing Order Service health endpoint..."
+        curl -f http://localhost:3000/health || exit 1
+        
+        echo "Stopping container..."
+        docker stop order-service
+        docker rm order-service
+      displayName: 'Test Order Service'
+    
+    - script: |
+        echo "Running Product Service container for testing..."
+        docker run -d --name product-service -p 3002:3002 $(productServiceImage)
+        
+        echo "Waiting for container to be healthy..."
+        sleep 10
+        
+        echo "Testing Product Service health endpoint..."
+        curl -f http://localhost:3002/health || exit 1
+        
+        echo "Stopping container..."
+        docker stop product-service
+        docker rm product-service
+      displayName: 'Test Product Service'
+    
+    - task: Docker@2
+      displayName: 'Push Store Frontend'
+      inputs:
+        command: 'push'
+        repository: '$(acrLoginServer)/store-front'
+        tags: |
+          $(imageTag)
+          latest
+    
+    - task: Docker@2
+      displayName: 'Push Order Service'
+      inputs:
+        command: 'push'
+        repository: '$(acrLoginServer)/order-service'
+        tags: |
+          $(imageTag)
+          latest
+    
+    - task: Docker@2
+      displayName: 'Push Product Service'
+      inputs:
+        command: 'push'
+        repository: '$(acrLoginServer)/product-service'
+        tags: |
+          $(imageTag)
+          latest
+
+
+- stage: DeployApplication
+  displayName: 'Deploy Application'
+  dependsOn: 
+  - Test
+  - DeployInfrastructure
+  jobs:
+  - deployment: DeployAKS
+    displayName: 'Deploy to AKS'
+    environment: 'Production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: 'Get AKS Credentials'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az aks get-credentials --resource-group $(aksResourceGroup) --name $(aksClusterName) --overwrite-existing
+          
+          - task: Kubernetes@1
+            displayName: 'Deploy NGINX Ingress Controller'
+            inputs:
+              connectionType: 'None'
+              command: 'apply'
+              arguments: '-f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml'
+          
+          - task: Bash@3
+            displayName: 'Update Kubernetes Manifests with Image Tags'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Create a copy of the original manifest
+                cp $(System.DefaultWorkingDirectory)/kubernetes/aks-store.yaml $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml
+                
+                # Update image references with ACR and build tags
+                sed -i "s|image: ghcr.io/azure-samples/aks-store-demo/store-front:latest|image: $(storeFrontImage)|g" $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml
+                sed -i "s|image: ghcr.io/azure-samples/aks-store-demo/order-service:latest|image: $(orderServiceImage)|g" $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml
+                sed -i "s|image: ghcr.io/azure-samples/aks-store-demo/product-service:latest|image: $(productServiceImage)|g" $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml
+                
+                echo "Updated manifest with image tags:"
+                cat $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml
+          
+          - task: Kubernetes@1
+            displayName: 'Deploy AKS Store Demo'
+            inputs:
+              connectionType: 'None'
+              command: 'apply'
+              arguments: '-f $(System.DefaultWorkingDirectory)/kubernetes/aks-store-updated.yaml'
+          
+          - task: Kubernetes@1
+            displayName: 'Deploy Ingress'
+            inputs:
+              connectionType: 'None'
+              command: 'apply'
+              arguments: '-f $(System.DefaultWorkingDirectory)/kubernetes/store-ingress.yaml'
+          
+          - task: Kubernetes@1
+            displayName: 'Wait for Deployments'
+            inputs:
+              connectionType: 'None'
+              command: 'rollout'
+              arguments: 'status deployment/store-front deployment/order-service deployment/product-service --timeout=300s'
+          
+          - task: Kubernetes@1
+            displayName: 'Verify Deployment'
+            inputs:
+              connectionType: 'None'
+              command: 'get'
+              arguments: 'pods,svc,ingress'
+              outputFormat: 'yaml'
