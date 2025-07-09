@@ -1,0 +1,83 @@
+{{- if .Values.productService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aks-store.fullname" . }}-product-service
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: product-service
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.productService.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: product-service
+  template:
+    metadata:
+      labels:
+        {{- include "aks-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: product-service
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.global.nodeSelector | nindent 8 }}
+      containers:
+      - name: product-service
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+          runAsUser: {{ .Values.containerSecurityContext.runAsUser }}
+          runAsNonRoot: {{ .Values.containerSecurityContext.runAsNonRoot }}
+          readOnlyRootFilesystem: {{ .Values.containerSecurityContext.readOnlyRootFilesystem }}
+          allowPrivilegeEscalation: {{ .Values.containerSecurityContext.allowPrivilegeEscalation }}
+        {{- end }}
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.productService.image.repository }}:{{ .Values.productService.image.tag }}"
+        imagePullPolicy: {{ .Values.productService.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.productService.service.port }}
+          name: http
+        env:
+        {{- range $key, $value := .Values.productService.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.productService.resources | nindent 10 }}
+        {{- if .Values.productService.probes.startup }}
+        startupProbe:
+          httpGet:
+            path: {{ .Values.productService.probes.startup.path }}
+            port: http
+          failureThreshold: {{ .Values.productService.probes.startup.failureThreshold }}
+          initialDelaySeconds: {{ .Values.productService.probes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.productService.probes.startup.periodSeconds }}
+        {{- end }}
+        {{- if .Values.productService.probes.readiness }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.productService.probes.readiness.path }}
+            port: http
+          failureThreshold: {{ .Values.productService.probes.readiness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.productService.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.productService.probes.readiness.periodSeconds }}
+        {{- end }}
+        {{- if .Values.productService.probes.liveness }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.productService.probes.liveness.path }}
+            port: http
+          failureThreshold: {{ .Values.productService.probes.liveness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.productService.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.productService.probes.liveness.periodSeconds }}
+        {{- end }}
+      {{- end }}

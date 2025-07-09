@@ -1,0 +1,80 @@
+{{- if .Values.storeFront.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aks-store.fullname" . }}-store-front
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store-front
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.storeFront.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: store-front
+  template:
+    metadata:
+      labels:
+        {{- include "aks-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: store-front
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.global.nodeSelector | nindent 8 }}
+      containers:
+      - name: store-front
+        securityContext:
+          runAsUser: 101
+          runAsGroup: 101
+          allowPrivilegeEscalation: false
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.storeFront.image.repository }}:{{ .Values.storeFront.image.tag }}"
+        imagePullPolicy: {{ .Values.storeFront.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.storeFront.service.targetPort }}
+          name: http
+        env:
+        - name: VUE_APP_ORDER_SERVICE_URL
+          value: "http://{{ include "aks-store.fullname" . }}-order-service:{{ .Values.orderService.service.port }}/"
+        - name: VUE_APP_PRODUCT_SERVICE_URL
+          value: "http://{{ include "aks-store.fullname" . }}-product-service:{{ .Values.productService.service.port }}/"
+        resources:
+          {{- toYaml .Values.storeFront.resources | nindent 10 }}
+        {{- if .Values.storeFront.probes.startup }}
+        startupProbe:
+          httpGet:
+            path: {{ .Values.storeFront.probes.startup.path }}
+            port: http
+          failureThreshold: {{ .Values.storeFront.probes.startup.failureThreshold }}
+          initialDelaySeconds: {{ .Values.storeFront.probes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.storeFront.probes.startup.periodSeconds }}
+        {{- end }}
+        {{- if .Values.storeFront.probes.readiness }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.storeFront.probes.readiness.path }}
+            port: http
+          failureThreshold: {{ .Values.storeFront.probes.readiness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.storeFront.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.storeFront.probes.readiness.periodSeconds }}
+        {{- end }}
+        {{- if .Values.storeFront.probes.liveness }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.storeFront.probes.liveness.path }}
+            port: http
+          failureThreshold: {{ .Values.storeFront.probes.liveness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.storeFront.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.storeFront.probes.liveness.periodSeconds }}
+        {{- end }}
+      {{- end }}

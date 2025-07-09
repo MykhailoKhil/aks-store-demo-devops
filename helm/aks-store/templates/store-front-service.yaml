@@ -1,0 +1,23 @@
+{{- if .Values.storeFront.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aks-store.fullname" . }}-store-front
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store-front
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.storeFront.service.type }}
+  ports:
+  - name: http
+    port: {{ .Values.storeFront.service.port }}
+    targetPort: {{ .Values.storeFront.service.targetPort }}
+    protocol: TCP
+  selector:
+    {{- include "aks-store.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: store-front
+{{- end }}

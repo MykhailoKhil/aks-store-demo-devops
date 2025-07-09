@@ -1,0 +1,102 @@
+{{- if .Values.orderService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aks-store.fullname" . }}-order-service
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: order-service
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.orderService.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: order-service
+  template:
+    metadata:
+      labels:
+        {{- include "aks-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: order-service
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.global.nodeSelector | nindent 8 }}
+      initContainers:
+      - name: wait-for-rabbitmq
+        image: busybox
+        command: ['sh', '-c', 'until nc -zv {{ include "aks-store.fullname" . }}-rabbitmq {{ .Values.rabbitmq.service.amqpPort }} && nc -zv {{ include "aks-store.fullname" . }}-rabbitmq {{ .Values.rabbitmq.service.httpPort }}; do echo waiting for rabbitmq; sleep 2; done;']
+        resources:
+          requests:
+            cpu: 1m
+            memory: 50Mi
+          limits:
+            cpu: 75m
+            memory: 128Mi
+      containers:
+      - name: order-service
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+          runAsUser: {{ .Values.containerSecurityContext.runAsUser }}
+          runAsNonRoot: {{ .Values.containerSecurityContext.runAsNonRoot }}
+          readOnlyRootFilesystem: {{ .Values.containerSecurityContext.readOnlyRootFilesystem }}
+          allowPrivilegeEscalation: {{ .Values.containerSecurityContext.allowPrivilegeEscalation }}
+        {{- end }}
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.orderService.image.repository }}:{{ .Values.orderService.image.tag }}"
+        imagePullPolicy: {{ .Values.orderService.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.orderService.service.port }}
+          name: http
+        env:
+        - name: ORDER_QUEUE_HOSTNAME
+          value: "{{ include "aks-store.fullname" . }}-rabbitmq"
+        - name: ORDER_QUEUE_PORT
+          value: "{{ .Values.rabbitmq.service.amqpPort }}"
+        - name: ORDER_QUEUE_USERNAME
+          value: {{ .Values.rabbitmq.auth.username | quote }}
+        - name: ORDER_QUEUE_PASSWORD
+          value: {{ .Values.rabbitmq.auth.password | quote }}
+        {{- range $key, $value := .Values.orderService.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.orderService.resources | nindent 10 }}
+        {{- if .Values.orderService.probes.startup }}
+        startupProbe:
+          httpGet:
+            path: {{ .Values.orderService.probes.startup.path }}
+            port: http
+          failureThreshold: {{ .Values.orderService.probes.startup.failureThreshold }}
+          initialDelaySeconds: {{ .Values.orderService.probes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.orderService.probes.startup.periodSeconds }}
+        {{- end }}
+        {{- if .Values.orderService.probes.readiness }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.orderService.probes.readiness.path }}
+            port: http
+          failureThreshold: {{ .Values.orderService.probes.readiness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.orderService.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.orderService.probes.readiness.periodSeconds }}
+        {{- end }}
+        {{- if .Values.orderService.probes.liveness }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.orderService.probes.liveness.path }}
+            port: http
+          failureThreshold: {{ .Values.orderService.probes.liveness.failureThreshold }}
+          initialDelaySeconds: {{ .Values.orderService.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.orderService.probes.liveness.periodSeconds }}
+        {{- end }}
+      {{- end }}

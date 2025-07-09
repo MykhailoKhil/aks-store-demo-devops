@@ -1,0 +1,107 @@
+{{- if .Values.networkPolicy.enabled }}
+# Network Policy for RabbitMQ
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aks-store.fullname" . }}-rabbitmq-network-policy
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rabbitmq
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "aks-store.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: order-service
+    ports:
+    - protocol: TCP
+      port: {{ .Values.rabbitmq.service.amqpPort }}
+    - protocol: TCP
+      port: {{ .Values.rabbitmq.service.httpPort }}
+  - ports:
+    - protocol: TCP
+      port: {{ .Values.rabbitmq.service.httpPort }}
+---
+# Network Policy for Order Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aks-store.fullname" . }}-order-service-network-policy
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: order-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: order-service
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "aks-store.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: store-front
+    ports:
+    - protocol: TCP
+      port: {{ .Values.orderService.service.port }}
+---
+# Network Policy for Product Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aks-store.fullname" . }}-product-service-network-policy
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: product-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: product-service
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "aks-store.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: store-front
+    ports:
+    - protocol: TCP
+      port: {{ .Values.productService.service.port }}
+---
+# Network Policy for Store Frontend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aks-store.fullname" . }}-store-front-network-policy
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store-front
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aks-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: store-front
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: {{ .Values.storeFront.service.targetPort }}
+{{- if .Values.networkPolicy.defaultDeny }}
+---
+# Default deny all ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aks-store.fullname" . }}-default-deny
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+{{- end }}
+{{- end }}

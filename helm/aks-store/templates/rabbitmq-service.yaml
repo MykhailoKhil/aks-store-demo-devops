@@ -1,0 +1,27 @@
+{{- if .Values.rabbitmq.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aks-store.fullname" . }}-rabbitmq
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.rabbitmq.service.type }}
+  ports:
+  - name: rabbitmq-amqp
+    port: {{ .Values.rabbitmq.service.amqpPort }}
+    targetPort: rabbitmq-amqp
+    protocol: TCP
+  - name: rabbitmq-http
+    port: {{ .Values.rabbitmq.service.httpPort }}
+    targetPort: rabbitmq-http
+    protocol: TCP
+  selector:
+    {{- include "aks-store.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+{{- end }}

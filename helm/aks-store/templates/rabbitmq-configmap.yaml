@@ -1,0 +1,21 @@
+{{- if .Values.rabbitmq.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aks-store.fullname" . }}-rabbitmq-plugins
+  labels:
+    {{- include "aks-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  enabled_plugins: |
+    [{{ range $i, $plugin := .Values.rabbitmq.plugins }}{{- if $i }},{{ end }}{{ $plugin }}{{ end }}].
+  rabbitmq.conf: |
+    default_user = {{ .Values.rabbitmq.auth.username }}
+    default_pass = {{ .Values.rabbitmq.auth.password }}
+    listeners.tcp.default = {{ .Values.rabbitmq.service.amqpPort }}
+    management.tcp.port = {{ .Values.rabbitmq.service.httpPort }}
+{{- end }}

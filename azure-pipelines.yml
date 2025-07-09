@@ -13,7 +13,7 @@ trigger:
 
 variables:
   # Azure subscription
-  azureSubscription: 'dd2193da-276d-4686-b0e7-9212589a09ab'
+  azureSubscription: '' # Set this to your Azure subscription ID
   
   # Azure Container Registry (created by Terraform)
   acrName: 'aksstoredemoregistry'  # Must match the name in terraform/variables.tf
